@@ -55,3 +55,23 @@ func mapFromInterface(row []interface{}) *Order {
 		Accepted:       accepted,
 	}
 }
+
+func mapToWaiter(dbResponse []interface{}) (*Waiter, error) {
+	if len(dbResponse) == 0 {
+		return nil, errors.New("user not found")
+	}
+
+	row := dbResponse[0].([]interface{})
+
+	username, _ := row[0].(string)
+	hashedPassword, _ := row[1].(string)
+	sessionToken := row[2].(string)
+	csrfToken := row[3].(string)
+
+	return &Waiter{
+		Username:       username,
+		HashedPassword: hashedPassword,
+		SessionToken:   sessionToken,
+		CSRFToken:      csrfToken,
+	}, nil
+}

@@ -12,6 +12,7 @@ import (
 )
 
 const ordersSpaceId = 514
+const waitersSpaceId = 515
 
 type Store struct {
 	config *config.Configuration
@@ -108,4 +109,24 @@ func (s *Store) DeleteOldOrders(olderThan time.Time) (int, error) {
 	}
 
 	return deletedCount, nil
+}
+
+func (s *Store) GetWaiter(username string) (*Waiter, error) {
+	selectRequest := tarantool.NewSelectRequest(waitersSpaceId).Key([]interface{}{username})
+	resp, err := s.conn.Do(selectRequest).Get()
+	if err != nil {
+		return nil, err
+	}
+	return mapToWaiter(resp)
+}
+
+func (s *Store) UpdateWaiter(waiter *Waiter) error {
+	replaceRequest := tarantool.NewReplaceRequest(waitersSpaceId).Tuple([]interface{}{
+		waiter.Username,
+		waiter.HashedPassword,
+		waiter.SessionToken,
+		waiter.CSRFToken,
+	})
+	_, err := s.conn.Do(replaceRequest).Get()
+	return err
 }

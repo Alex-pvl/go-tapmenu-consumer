@@ -68,12 +68,19 @@ func (s *Server) configureLogger() error {
 }
 
 func (s *Server) configureRouter() {
+	s.router.HandleFunc("/login", s.handleLogin()).Methods(http.MethodPost)
 	s.router.HandleFunc("/orders", s.handleGetOrders()).Methods(http.MethodGet)
 	s.router.HandleFunc("/orders/{orderId}/accept", s.handleAcceptOrder()).Methods(http.MethodPost)
 }
 
 func (s *Server) handleGetOrders() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := s.authorize(r); err != nil {
+			s.logger.Error(err)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		pageParam := r.URL.Query().Get("page")
 		sizeParam := r.URL.Query().Get("size")
 
@@ -120,6 +127,12 @@ func (s *Server) handleGetOrders() http.HandlerFunc {
 
 func (s *Server) handleAcceptOrder() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := s.authorize(r); err != nil {
+			s.logger.Error(err)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		vars := mux.Vars(r)
 		orderId := vars["orderId"]
 
@@ -211,8 +224,8 @@ func (s *Server) cleanupOldOrders(maxAge time.Duration) {
 	cutoffTime := time.Now().Add(-maxAge)
 
 	deletedCount, err := s.db.DeleteOldOrders(cutoffTime)
-	if err != nil {
-		s.logger.Errorf("Error cleaning up old orders: %v", err)
+	if err != nil || deletedCount == 0 {
+		s.logger.Warnf("Error cleaning up old orders: %v", err)
 		return
 	}
 

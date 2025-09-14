@@ -14,7 +14,7 @@ func (s *Server) handleLogin() http.HandlerFunc {
 		username := r.FormValue("username")
 		password := r.FormValue("password")
 
-		waiter, err := s.db.GetWaiter(username)
+		waiter, err := s.db.GetWaiterByUsername(username)
 
 		if err != nil {
 			s.logger.Error(err)
@@ -57,23 +57,33 @@ func (s *Server) handleLogin() http.HandlerFunc {
 }
 
 func (s *Server) authorize(r *http.Request) error {
-	username := r.FormValue("username")
-	waiter, err := s.db.GetWaiter(username)
+	session, err := r.Cookie("session_token")
 	if err != nil {
 		return AuthError
 	}
 
-	st, err := r.Cookie("session_token")
-	if err != nil || st.Value == "" || st.Value != waiter.SessionToken {
+	waiter, err := s.db.GetWaiterBySession(session.Value)
+	if err != nil || session.Value != waiter.SessionToken {
 		s.logger.Error("session token mismatch")
 		return AuthError
 	}
 
-	csrf, err := r.Cookie("csrf_token")
-	if err != nil || csrf.Value == "" || csrf.Value != waiter.CSRFToken {
+	csrf := r.Header.Get("X-CSRF-Token")
+	if csrf == "" || csrf != waiter.CSRFToken {
 		s.logger.Error("csrf token mismatch")
 		return AuthError
 	}
 
 	return nil
+}
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.authorize(r); err != nil {
+			s.logger.Error("Unauthorized: ", err)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

@@ -13,6 +13,7 @@ import (
 
 const ordersSpaceId = 514
 const waitersSpaceId = 515
+const sessionIndex = 1
 
 type Store struct {
 	config *config.Configuration
@@ -111,8 +112,17 @@ func (s *Store) DeleteOldOrders(olderThan time.Time) (int, error) {
 	return deletedCount, nil
 }
 
-func (s *Store) GetWaiter(username string) (*Waiter, error) {
+func (s *Store) GetWaiterByUsername(username string) (*Waiter, error) {
 	selectRequest := tarantool.NewSelectRequest(waitersSpaceId).Key([]interface{}{username})
+	resp, err := s.conn.Do(selectRequest).Get()
+	if err != nil {
+		return nil, err
+	}
+	return mapToWaiter(resp)
+}
+
+func (s *Store) GetWaiterBySession(session string) (*Waiter, error) {
+	selectRequest := tarantool.NewSelectRequest(waitersSpaceId).Index(sessionIndex).Key([]interface{}{session})
 	resp, err := s.conn.Do(selectRequest).Get()
 	if err != nil {
 		return nil, err

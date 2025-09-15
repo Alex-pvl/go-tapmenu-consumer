@@ -54,7 +54,7 @@ func (s *Server) Start() error {
 
 	s.logger.Info("starting server on port ", s.configuration.BindAddress)
 
-	handler := corsMiddleware(s.router)
+	handler := s.corsMiddleware(s.router)
 
 	return http.ListenAndServe(s.configuration.BindAddress, handler)
 }
@@ -241,11 +241,17 @@ func (s *Server) Stop() {
 	close(s.stopCron)
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == s.configuration.LocalOriginUrl || origin == s.configuration.FrontOriginUrl {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return

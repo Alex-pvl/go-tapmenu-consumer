@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"log"
+	"github.com/sirupsen/logrus"
 	"time"
 
 	"github.com/alex-pvl/go-tapmenu-consumer/internal/app/config"
@@ -11,19 +11,18 @@ import (
 	"github.com/tarantool/go-tarantool/v2/datetime"
 )
 
-const ordersSpaceId = 514
-const waitersSpaceId = 515
 const sessionIndex = 1
 
 type Store struct {
 	config *config.Configuration
 	conn   *tarantool.Connection
+	logger *logrus.Logger
 }
 
-func New(config *config.Configuration) *Store {
-	s := &Store{config: config}
+func New(config *config.Configuration, logger *logrus.Logger) *Store {
+	s := &Store{config: config, logger: logger}
 	if err := s.connect(); err != nil {
-		log.Fatal(err)
+		logger.Error(err)
 	}
 	return s
 }
@@ -33,7 +32,7 @@ func (s *Store) connect() error {
 	defer cancel()
 
 	dialer := tarantool.NetDialer{
-		Address:  s.config.TarantooldbAddress,
+		Address:  s.config.TarantoolAddress,
 		User:     s.config.Username,
 		Password: s.config.Password,
 	}
@@ -51,7 +50,7 @@ func (s *Store) connect() error {
 }
 
 func (s *Store) GetOrder(id uuid.UUID) (*Order, error) {
-	selectRequest := tarantool.NewSelectRequest(ordersSpaceId).Key([]interface{}{id.String()})
+	selectRequest := tarantool.NewSelectRequest(s.config.OrdersSpaceId).Key([]interface{}{id.String()})
 	resp, err := s.conn.Do(selectRequest).Get()
 	if err != nil {
 		return nil, err
@@ -60,10 +59,10 @@ func (s *Store) GetOrder(id uuid.UUID) (*Order, error) {
 }
 
 func (s *Store) GetOrderSlice() ([]*Order, error) {
-	selectRequest := tarantool.NewSelectRequest(ordersSpaceId)
+	selectRequest := tarantool.NewSelectRequest(s.config.OrdersSpaceId)
 	resp, err := s.conn.Do(selectRequest).Get()
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	return mapToOrderSlice(resp)
 }
@@ -72,7 +71,7 @@ func (s *Store) ReplaceOrder(order *Order) error {
 	createdAt, _ := datetime.MakeDatetime(order.CreatedAt)
 	updatedAt, _ := datetime.MakeDatetime(order.UpdatedAt)
 
-	replaceRequest := tarantool.NewReplaceRequest(ordersSpaceId).Tuple([]interface{}{
+	replaceRequest := tarantool.NewReplaceRequest(s.config.OrdersSpaceId).Tuple([]interface{}{
 		order.Id.String(),
 		order.RestaurantName,
 		order.TableNumber,
@@ -85,7 +84,7 @@ func (s *Store) ReplaceOrder(order *Order) error {
 }
 
 func (s *Store) DeleteOrder(id uuid.UUID) error {
-	deleteRequest := tarantool.NewDeleteRequest(ordersSpaceId).Key([]interface{}{id.String()})
+	deleteRequest := tarantool.NewDeleteRequest(s.config.OrdersSpaceId).Key([]interface{}{id.String()})
 	_, err := s.conn.Do(deleteRequest).Get()
 	return err
 }
@@ -113,7 +112,7 @@ func (s *Store) DeleteOldOrders(olderThan time.Time) (int, error) {
 }
 
 func (s *Store) GetWaiterByUsername(username string) (*Waiter, error) {
-	selectRequest := tarantool.NewSelectRequest(waitersSpaceId).Key([]interface{}{username})
+	selectRequest := tarantool.NewSelectRequest(s.config.WaitersSpaceId).Key([]interface{}{username})
 	resp, err := s.conn.Do(selectRequest).Get()
 	if err != nil {
 		return nil, err
@@ -122,7 +121,7 @@ func (s *Store) GetWaiterByUsername(username string) (*Waiter, error) {
 }
 
 func (s *Store) GetWaiterBySession(session string) (*Waiter, error) {
-	selectRequest := tarantool.NewSelectRequest(waitersSpaceId).Index(sessionIndex).Key([]interface{}{session})
+	selectRequest := tarantool.NewSelectRequest(s.config.WaitersSpaceId).Index(sessionIndex).Key([]interface{}{session})
 	resp, err := s.conn.Do(selectRequest).Get()
 	if err != nil {
 		return nil, err
@@ -131,7 +130,7 @@ func (s *Store) GetWaiterBySession(session string) (*Waiter, error) {
 }
 
 func (s *Store) UpdateWaiter(waiter *Waiter) error {
-	replaceRequest := tarantool.NewReplaceRequest(waitersSpaceId).Tuple([]interface{}{
+	replaceRequest := tarantool.NewReplaceRequest(s.config.WaitersSpaceId).Tuple([]interface{}{
 		waiter.Username,
 		waiter.HashedPassword,
 		waiter.SessionToken,

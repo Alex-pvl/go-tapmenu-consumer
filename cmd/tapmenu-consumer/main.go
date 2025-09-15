@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"github.com/sirupsen/logrus"
 
 	"github.com/BurntSushi/toml"
 	"github.com/alex-pvl/go-tapmenu-consumer/internal/app/config"
@@ -28,10 +29,29 @@ func main() {
 		log.Fatal(err)
 	}
 
-	db := store.New(configuration)
-	consumer := kafka.NewConsumer(configuration)
-	server := tapmenu.New(configuration, db, consumer)
-	if err := server.Start(); err != nil {
+	logger, err := configureLogger(configuration)
+	if err != nil {
 		log.Fatal(err)
 	}
+
+	db := store.New(configuration, logger)
+	logger.Infof("connected to tarantool %s:***@%s", configuration.Username, configuration.TarantoolAddress)
+	consumer := kafka.NewConsumer(configuration)
+	logger.Infof("created Kafka consumer on %s; topic=%s; consumer-group=%s",
+		configuration.KafkaAddress, configuration.TopicName, configuration.ConsumerGroup)
+	server := tapmenu.New(configuration, db, consumer, logger)
+	if err := server.Start(); err != nil {
+		logger.Error(err)
+	}
+}
+
+func configureLogger(configuration *config.Configuration) (*logrus.Logger, error) {
+	level, err := logrus.ParseLevel(configuration.LogLevel)
+	if err != nil {
+		return nil, err
+	}
+
+	logger := logrus.New()
+	logger.SetLevel(level)
+	return logger, nil
 }

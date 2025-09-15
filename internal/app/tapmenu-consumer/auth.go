@@ -80,7 +80,7 @@ func (s *Server) authorize(r *http.Request) error {
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := s.authorize(r); err != nil {
-			s.logger.Error("Unauthorized: ", err)
+			s.logger.Error("unauthorized: ", err)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}

@@ -31,10 +31,11 @@ func New(
 	configuration *config.Configuration,
 	db *store.Store,
 	consumer *kafka.Consumer,
+	logger *logrus.Logger,
 ) *Server {
 	return &Server{
 		configuration: configuration,
-		logger:        logrus.New(),
+		logger:        logger,
 		router:        mux.NewRouter(),
 		db:            db,
 		consumer:      consumer,
@@ -44,29 +45,16 @@ func New(
 }
 
 func (s *Server) Start() error {
-	if err := s.configureLogger(); err != nil {
-		return err
-	}
 	s.configureRouter()
 
 	go s.startConsumer()
 	go s.startOrderCleanupCron()
 
-	s.logger.Info("starting server on port ", s.configuration.BindAddress)
+	s.logger.Infof("starting server on %s", s.configuration.BindAddress)
 
 	handler := s.corsMiddleware(s.router)
 
 	return http.ListenAndServe(s.configuration.BindAddress, handler)
-}
-
-func (s *Server) configureLogger() error {
-	level, err := logrus.ParseLevel(s.configuration.LogLevel)
-	if err != nil {
-		return err
-	}
-
-	s.logger.SetLevel(level)
-	return nil
 }
 
 func (s *Server) configureRouter() {
@@ -125,17 +113,19 @@ func (s *Server) handleAcceptOrder() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		orderId := vars["orderId"]
+		orderIdParsed, err := uuid.Parse(orderId)
+		if err != nil {
+			s.logger.Errorf("error parsing order id %s", orderId)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
 		found := false
+
 		for i := range s.orders {
-			orderIdParsed, err := uuid.Parse(orderId)
-			if err != nil {
-				s.logger.Errorf("error parsing order id %s", orderId)
-				continue
-			}
 			if s.orders[i].Id == orderIdParsed {
 				s.orders[i].Accepted = true
 				found = true
@@ -144,13 +134,17 @@ func (s *Server) handleAcceptOrder() http.HandlerFunc {
 		}
 
 		if !found {
-			http.Error(w, "order not found", http.StatusNotFound)
+			msg := "order [" + orderId + "] not found"
+			s.logger.Error(msg)
+			http.Error(w, msg, http.StatusNotFound)
 			return
 		}
 
 		order, err := s.db.GetOrder(uuid.MustParse(orderId))
 		if err != nil {
 			s.logger.Errorf("error getting order [%s]", orderId)
+			http.Error(w, "error getting order: "+orderId, http.StatusInternalServerError)
+			return
 		}
 
 		order.UpdatedAt = time.Now().UTC()
@@ -158,6 +152,8 @@ func (s *Server) handleAcceptOrder() http.HandlerFunc {
 
 		if err = s.db.ReplaceOrder(order); err != nil {
 			s.logger.Errorf("error updating order [%s]", orderId)
+			http.Error(w, "error updating order: "+orderId, http.StatusInternalServerError)
+			return
 		}
 
 		renderJSON(w, map[string]string{
@@ -197,14 +193,14 @@ func (s *Server) startOrderCleanupCron() {
 	ticker := time.NewTicker(cronInterval)
 	defer ticker.Stop()
 
-	s.logger.Infof("Starting order cleanup cron job. Will delete orders older than %v every %v", cleanupInterval, cronInterval)
+	s.logger.Infof("starting order cleanup cron job. Will delete orders older than %v every %v", cleanupInterval, cronInterval)
 
 	for {
 		select {
 		case <-ticker.C:
 			s.cleanupOldOrders(cleanupInterval)
 		case <-s.stopCron:
-			s.logger.Info("Stopping order cleanup cron job")
+			s.logger.Info("stopping order cleanup cron job")
 			return
 		}
 	}
@@ -218,12 +214,12 @@ func (s *Server) cleanupOldOrders(maxAge time.Duration) {
 		return
 	}
 	if err != nil {
-		s.logger.Errorf("Error cleaning up old orders: %v", err)
+		s.logger.Errorf("error cleaning up old orders: %v", err)
 		return
 	}
 
 	if deletedCount > 0 {
-		s.logger.Infof("Cleaned up %d orders older than %v", deletedCount, cutoffTime)
+		s.logger.Infof("cleaned up %d orders older than %v", deletedCount, cutoffTime)
 
 		s.mu.Lock()
 		filteredOrders := make([]*store.Order, 0)

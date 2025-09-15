@@ -7,6 +7,8 @@ import (
 	"sort"
 )
 
+var NoOrdersError = errors.New("no orders found")
+
 func mapToOrder(dbResponse []interface{}) (*Order, error) {
 	if len(dbResponse) == 0 {
 		return nil, errors.New("order not found")
@@ -14,10 +16,10 @@ func mapToOrder(dbResponse []interface{}) (*Order, error) {
 	return mapFromInterface(dbResponse[0].([]interface{})), nil
 }
 
-func mapToOrderSlice(dbResponse []interface{}) ([]*Order, error) {
+func mapToOrderSlice(dbResponse []interface{}, restName string) ([]*Order, error) {
 	slice := make([]*Order, 0, len(dbResponse))
 	if len(dbResponse) == 0 {
-		return nil, errors.New("no orders")
+		return nil, NoOrdersError
 	}
 
 	for _, line := range dbResponse {
@@ -25,7 +27,14 @@ func mapToOrderSlice(dbResponse []interface{}) ([]*Order, error) {
 		if order.Accepted {
 			continue
 		}
+		if restName != "" && order.RestaurantName != restName {
+			continue
+		}
 		slice = append(slice, order)
+	}
+
+	if len(slice) == 0 {
+		return nil, NoOrdersError
 	}
 
 	sort.Slice(slice, func(i, j int) bool {
@@ -58,20 +67,20 @@ func mapFromInterface(row []interface{}) *Order {
 
 func mapToWaiter(dbResponse []interface{}) (*Waiter, error) {
 	if len(dbResponse) == 0 {
-		return nil, errors.New("user not found")
+		return nil, errors.New("waiter not found")
 	}
 
 	row := dbResponse[0].([]interface{})
 
-	username, _ := row[0].(string)
-	hashedPassword, _ := row[1].(string)
-	sessionToken := row[2].(string)
-	csrfToken := row[3].(string)
+	waiterId, _ := row[0].(string)
+	username, _ := row[1].(string)
+	hashedPassword, _ := row[2].(string)
+	restaurantName := row[3].(string)
 
 	return &Waiter{
+		Id:             uuid.MustParse(waiterId),
 		Username:       username,
 		HashedPassword: hashedPassword,
-		SessionToken:   sessionToken,
-		CSRFToken:      csrfToken,
+		RestaurantName: restaurantName,
 	}, nil
 }

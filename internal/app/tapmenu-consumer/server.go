@@ -3,6 +3,7 @@ package tapmenu
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"sync"
@@ -78,11 +79,17 @@ func (s *Server) handleGetOrders() http.HandlerFunc {
 			size = 10
 		}
 
+		waiter, err := s.getWaiter(r.Context())
+		if err != nil {
+			s.logger.Error(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 
-		var err error
-		s.orders, err = s.db.GetOrderSlice()
+		s.orders, err = s.db.GetOrderSliceByRestaurant(waiter.RestaurantName)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -111,6 +118,7 @@ func (s *Server) handleGetOrders() http.HandlerFunc {
 
 func (s *Server) handleAcceptOrder() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var errorMsg string
 		vars := mux.Vars(r)
 		orderId := vars["orderId"]
 		orderIdParsed, err := uuid.Parse(orderId)
@@ -134,9 +142,9 @@ func (s *Server) handleAcceptOrder() http.HandlerFunc {
 		}
 
 		if !found {
-			msg := "order [" + orderId + "] not found"
-			s.logger.Error(msg)
-			http.Error(w, msg, http.StatusNotFound)
+			errorMsg = "order [" + orderId + "] not found"
+			s.logger.Error(errorMsg)
+			http.Error(w, errorMsg, http.StatusNotFound)
 			return
 		}
 
@@ -144,6 +152,27 @@ func (s *Server) handleAcceptOrder() http.HandlerFunc {
 		if err != nil {
 			s.logger.Errorf("error getting order [%s]", orderId)
 			http.Error(w, "error getting order: "+orderId, http.StatusInternalServerError)
+			return
+		}
+
+		waiter, err := s.getWaiter(r.Context())
+		if err != nil {
+			s.logger.Error(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if waiter.RestaurantName != order.RestaurantName {
+			errorMsg = fmt.Sprintf("waiter %s[%s] is not from [%s] restaurant", waiter.Username, waiter.Id, order.RestaurantName)
+			s.logger.Error(errorMsg)
+			http.Error(w, errorMsg, http.StatusBadRequest)
+			return
+		}
+
+		if order.Accepted {
+			errorMsg = fmt.Sprintf("order [%s] already accepted", order.Id)
+			s.logger.Warn(errorMsg)
+			http.Error(w, errorMsg, http.StatusBadRequest)
 			return
 		}
 
@@ -254,6 +283,20 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) getWaiter(ctx context.Context) (*store.Waiter, error) {
+	waiterId, err := s.getWaiterIdFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	waiter, err := s.db.GetWaiterById(waiterId)
+	if err != nil {
+		return nil, err
+	}
+
+	return waiter, nil
 }
 
 func renderJSON(w http.ResponseWriter, v interface{}) {

@@ -16,8 +16,8 @@ type Order struct {
 }
 
 type Waiter struct {
-	Username       string `json:"username"`
-	HashedPassword string `json:"hashed_password"`
-	SessionToken   string `json:"session_token"`
-	CSRFToken      string `json:"csrf_token"`
+	Id             uuid.UUID `json:"id"`
+	Username       string    `json:"username"`
+	HashedPassword string    `json:"hashed_password"`
+	RestaurantName string    `json:"restaurant_name"`
 }

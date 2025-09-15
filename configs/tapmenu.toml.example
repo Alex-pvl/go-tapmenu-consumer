@@ -2,6 +2,7 @@ bind_address = ":8089"
 log_level = "debug"
 front_origin_url = "http://localhost:3000"
 local_origin_url = "http://localhost:3000"
+jwt_secret = "secret"
 
 # tarantool
 tarantool_address = ":3302"
@@ -10,6 +11,7 @@ password = "password"
 timeout = 3
 orders_space_id = 513
 waiters_space_id = 514
+waiter_username_idx = 1
 
 # kafka
 kafka_address = ":9092"

@@ -11,8 +11,6 @@ import (
 	"github.com/tarantool/go-tarantool/v2/datetime"
 )
 
-const sessionIndex = 1
-
 type Store struct {
 	config *config.Configuration
 	conn   *tarantool.Connection
@@ -64,7 +62,16 @@ func (s *Store) GetOrderSlice() ([]*Order, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mapToOrderSlice(resp)
+	return mapToOrderSlice(resp, "")
+}
+
+func (s *Store) GetOrderSliceByRestaurant(restName string) ([]*Order, error) {
+	selectRequest := tarantool.NewSelectRequest(s.config.OrdersSpaceId)
+	resp, err := s.conn.Do(selectRequest).Get()
+	if err != nil {
+		return nil, err
+	}
+	return mapToOrderSlice(resp, restName)
 }
 
 func (s *Store) ReplaceOrder(order *Order) error {
@@ -97,9 +104,6 @@ func (s *Store) DeleteOldOrders(olderThan time.Time) (int, error) {
 
 	deletedCount := 0
 	for _, order := range orders {
-		if order.Accepted {
-			continue
-		}
 		if order.CreatedAt.Before(olderThan) {
 			if err := s.DeleteOrder(order.Id); err != nil {
 				return deletedCount, err
@@ -111,31 +115,22 @@ func (s *Store) DeleteOldOrders(olderThan time.Time) (int, error) {
 	return deletedCount, nil
 }
 
+func (s *Store) GetWaiterById(waiterId string) (*Waiter, error) {
+	selectRequest := tarantool.NewSelectRequest(s.config.WaitersSpaceId).Key([]interface{}{waiterId})
+	resp, err := s.conn.Do(selectRequest).Get()
+	if err != nil {
+		return nil, err
+	}
+	return mapToWaiter(resp)
+}
+
 func (s *Store) GetWaiterByUsername(username string) (*Waiter, error) {
-	selectRequest := tarantool.NewSelectRequest(s.config.WaitersSpaceId).Key([]interface{}{username})
+	selectRequest := tarantool.NewSelectRequest(
+		s.config.WaitersSpaceId,
+	).Index(s.config.WaiterUsernameIdx).Key([]interface{}{username})
 	resp, err := s.conn.Do(selectRequest).Get()
 	if err != nil {
 		return nil, err
 	}
 	return mapToWaiter(resp)
-}
-
-func (s *Store) GetWaiterBySession(session string) (*Waiter, error) {
-	selectRequest := tarantool.NewSelectRequest(s.config.WaitersSpaceId).Index(sessionIndex).Key([]interface{}{session})
-	resp, err := s.conn.Do(selectRequest).Get()
-	if err != nil {
-		return nil, err
-	}
-	return mapToWaiter(resp)
-}
-
-func (s *Store) UpdateWaiter(waiter *Waiter) error {
-	replaceRequest := tarantool.NewReplaceRequest(s.config.WaitersSpaceId).Tuple([]interface{}{
-		waiter.Username,
-		waiter.HashedPassword,
-		waiter.SessionToken,
-		waiter.CSRFToken,
-	})
-	_, err := s.conn.Do(replaceRequest).Get()
-	return err
 }

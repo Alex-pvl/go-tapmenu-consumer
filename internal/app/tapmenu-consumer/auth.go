@@ -1,13 +1,16 @@
 package tapmenu
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"github.com/alex-pvl/go-tapmenu-consumer/internal/app/utils"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/google/uuid"
 	"net/http"
+	"strings"
 	"time"
 )
-
-var AuthError = errors.New("unauthorized")
 
 func (s *Server) handleLogin() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -28,62 +31,82 @@ func (s *Server) handleLogin() http.HandlerFunc {
 			return
 		}
 
-		sessionToken := utils.GenerateToken(32)
-		csrfToken := utils.GenerateToken(32)
-
-		http.SetCookie(w, &http.Cookie{
-			Name:     "session_token",
-			Value:    sessionToken,
-			Expires:  time.Now().Add(24 * time.Hour),
-			HttpOnly: true,
-		})
-		http.SetCookie(w, &http.Cookie{
-			Name:     "csrf_token",
-			Value:    csrfToken,
-			Expires:  time.Now().Add(24 * time.Hour),
-			HttpOnly: false,
-		})
-
-		waiter.SessionToken = sessionToken
-		waiter.CSRFToken = csrfToken
-
-		err = s.db.UpdateWaiter(waiter)
+		token, err := s.createToken(waiter.Id, waiter.Username)
 		if err != nil {
 			s.logger.Error(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 
-		s.logger.Infof("waiter [%s] logged in", username)
+		renderJSON(w, map[string]string{
+			"token": token,
+		})
 	}
-}
-
-func (s *Server) authorize(r *http.Request) error {
-	session, err := r.Cookie("session_token")
-	if err != nil {
-		return AuthError
-	}
-
-	waiter, err := s.db.GetWaiterBySession(session.Value)
-	if err != nil || session.Value != waiter.SessionToken {
-		s.logger.Error("session token mismatch")
-		return AuthError
-	}
-
-	csrf := r.Header.Get("X-CSRF-Token")
-	if csrf == "" || csrf != waiter.CSRFToken {
-		s.logger.Error("csrf token mismatch")
-		return AuthError
-	}
-
-	return nil
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := s.authorize(r); err != nil {
-			s.logger.Error("unauthorized: ", err)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		authorization := r.Header.Get("Authorization")
+
+		if authorization == "" {
+			s.logger.Error("empty authorization header")
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+
+		authorization = strings.Replace(authorization, "Bearer ", "", 1)
+
+		token, err := jwt.Parse(authorization, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return []byte(s.configuration.JWTSecret), nil
+		})
+
+		if err != nil {
+			s.logger.Error(err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if !token.Valid {
+			s.logger.Error("token is invalid")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			s.logger.Error("cannot assert claims")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		waiterId, ok := claims["waiter_id"].(string)
+		if !ok {
+			s.logger.Error("cannot assert waiter_id")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), "waiter_id", waiterId)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (s *Server) createToken(waiterId uuid.UUID, username string) (string, error) {
+	claims := jwt.MapClaims{}
+	claims["waiter_id"] = waiterId.String()
+	claims["username"] = username
+	claims["exp"] = time.Now().Add(time.Hour * 24).Unix()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.configuration.JWTSecret))
+}
+
+func (s *Server) getWaiterIdFromContext(ctx context.Context) (string, error) {
+	userID, ok := ctx.Value("waiter_id").(string)
+	if !ok {
+		return "", errors.New("cannot find waiter_id in context")
+	}
+	return userID, nil
 }
